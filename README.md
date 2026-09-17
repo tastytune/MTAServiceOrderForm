@@ -1,7 +1,7 @@
 
-  # Service order form MTA
+  # Customer Onboarding Application
 
-  This is a code bundle for Service order form MTA. The original project is available at https://www.figma.com/design/Gh3VEspqpOQ9wEKyOl9sF8/Customer-Onboarding-Application.
+  This is a code bundle for Customer Onboarding Application. The original project is available at https://www.figma.com/design/Gh3VEspqpOQ9wEKyOl9sF8/Customer-Onboarding-Application.
 
   ## Running the code
 
