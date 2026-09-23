@@ -1,5 +1,6 @@
 import React from 'react';
 import { Card } from '@/app/components/ui/card';
+import mtaLogo from 'figma:asset/d95948f19ab7cdceaf369a28bb082f71bb4b04b3.png';
 
 interface TaskListScreenProps {
   onSelectTask: (taskName: string) => void;
@@ -26,16 +27,25 @@ export function TaskListScreen({ onSelectTask }: TaskListScreenProps) {
   ];
 
   return (
-    <div className="max-w-4xl mx-auto bg-[#98636300]">
-      {/* Contact Information Header */}
-      <div className="mb-6 flex justify-end">
-        <div className="text-right">
-          <div className="text-white font-bold text-lg">Acme Corporation LLC</div>
-          <div className="text-white text-base">Robert Johnson</div>
+    <div className="max-w-8xl mx-auto bg-[#98636300]">
+      {/* Contact Information Header — MTA logo on the left, directly under
+          the "Local Mission. Global Vision." tagline baked into the globe
+          background image. The Acme Corporation text is pinned to the
+          top-right corner with absolute positioning (rather than relying on
+          a flex "justify-between" against the logo), so it stays put in the
+          corner regardless of the logo's own size or load state. */}
+      <div className="relative w-full mb-6">
+        <img src={mtaLogo} alt="MTA Logo" className="w-56 h-auto" />
+
+        {/* No card, no border — just discreet white text sitting on the
+            background image, matching the logo's own understated look. */}
+        <div className="absolute -top-4 right-0 text-right">
+          <div className="text-white font-semibold text-sm">Acme Corporation LLC</div>
+          <div className="text-white/80 text-xs">Robert Johnson</div>
         </div>
       </div>
 
-      <Card className="bg-[rgba(236,248,253,0.95)] backdrop-blur-sm shadow-xl overflow-hidden">
+      <Card className="w-[60%] mx-auto bg-[rgba(236,248,253,0.95)] backdrop-blur-sm shadow-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>

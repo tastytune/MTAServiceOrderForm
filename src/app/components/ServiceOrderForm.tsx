@@ -3,7 +3,7 @@ import { Card } from '@/app/components/ui/card';
 import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
 import { Label } from '@/app/components/ui/label';
-import { Info } from 'lucide-react';
+import { Info, MapPin, Mail } from 'lucide-react';
 
 // Country and State/Province data
 const COUNTRIES = [
@@ -51,6 +51,63 @@ const getStatesForCountry = (country: string) => {
   }
 };
 
+// Mock address predictions to emulate the Google Places Autocomplete pattern:
+// the user types a few characters of the street address and picks a full,
+// pre-validated address from a dropdown, which then fills City/State/ZIP/Country.
+interface AddressSuggestion {
+  line1: string;
+  line2?: string;
+  city: string;
+  state: string;
+  zip: string;
+  country: string;
+}
+
+const MOCK_ADDRESS_SUGGESTIONS: AddressSuggestion[] = [
+  { line1: '742 Evergreen Terrace', city: 'Springfield', state: 'Illinois', zip: '62701', country: 'US' },
+  { line1: '1600 Amphitheatre Parkway', city: 'Mountain View', state: 'California', zip: '94043', country: 'US' },
+  { line1: '350 Fifth Avenue', line2: 'Empire State Building', city: 'New York', state: 'New York', zip: '10118', country: 'US' },
+  { line1: '1 Infinite Loop', city: 'Cupertino', state: 'California', zip: '95014', country: 'US' },
+  { line1: '221B Baker Street', city: 'London', state: 'England', zip: 'NW1 6XE', country: 'UK' },
+  { line1: '1 Yonge Street', city: 'Toronto', state: 'Ontario', zip: 'M5E 1E5', country: 'CA' },
+  { line1: 'Paseo de la Reforma 222', city: 'Ciudad de México', state: 'México', zip: '06600', country: 'MX' },
+];
+
+// Fallback location pools used to synthesize plausible suggestions when the
+// typed text doesn't match one of the curated addresses above — real address
+// autocomplete APIs always return *something* as you type, so the mock does too.
+const FALLBACK_LOCATIONS: Omit<AddressSuggestion, 'line1' | 'line2'>[] = [
+  { city: 'Springfield', state: 'Illinois', zip: '62701', country: 'US' },
+  { city: 'Mountain View', state: 'California', zip: '94043', country: 'US' },
+  { city: 'New York', state: 'New York', zip: '10118', country: 'US' },
+  { city: 'Cupertino', state: 'California', zip: '95014', country: 'US' },
+];
+
+const buildFallbackSuggestions = (query: string): AddressSuggestion[] => {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+  const looksNumeric = /^\d+$/.test(trimmed);
+  const line1 = looksNumeric ? `${trimmed} Main Street` : `${trimmed} Street`;
+  return FALLBACK_LOCATIONS.map((location) => ({ line1, ...location }));
+};
+
+const getAddressSuggestions = (query: string): AddressSuggestion[] => {
+  const normalized = query.trim().toLowerCase();
+  if (normalized.length < 2) return [];
+
+  const knownMatches = MOCK_ADDRESS_SUGGESTIONS.filter((addr) =>
+    `${addr.line1} ${addr.city} ${addr.state} ${addr.zip}`
+      .toLowerCase()
+      .includes(normalized),
+  );
+
+  if (knownMatches.length > 0) return knownMatches.slice(0, 5);
+
+  // No curated address matched — synthesize suggestions so the field always
+  // behaves like a real autocomplete instead of silently showing nothing.
+  return buildFallbackSuggestions(query).slice(0, 4);
+};
+
 interface ServiceOrderFormProps {
   serviceType: string;
   onBack: () => void;
@@ -59,7 +116,8 @@ interface ServiceOrderFormProps {
 
 export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFormProps) {
   const [formData, setFormData] = useState<any>({
-    invoiceCountry: 'US' // Default to US
+    invoiceCountry: 'US', // Default to US
+    billingCountry: 'US' // MTA only does business in Alaska (US) — always US
   });
   const [billingMode, setBillingMode] = useState<'existing' | 'new'>('existing');
   const [selectedBillingContact, setSelectedBillingContact] = useState<string>('LP');
@@ -69,9 +127,32 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
   const [selectedOnsiteContact, setSelectedOnsiteContact] = useState<string>('PL');
   const [billingAddressMode, setBillingAddressMode] = useState<'existing' | 'new'>('existing');
   const [selectedBillingAddress, setSelectedBillingAddress] = useState<string>('LOC1');
+  const [billingAddressSuggestions, setBillingAddressSuggestions] = useState<AddressSuggestion[]>([]);
+  const [showBillingAddressSuggestions, setShowBillingAddressSuggestions] = useState(false);
 
   const handleInputChange = (field: string, value: string) => {
     setFormData({ ...formData, [field]: value });
+  };
+
+  const handleBillingAddressLine1Change = (value: string) => {
+    handleInputChange('billingAddressLine1', value);
+    const matches = getAddressSuggestions(value);
+    setBillingAddressSuggestions(matches);
+    setShowBillingAddressSuggestions(matches.length > 0);
+  };
+
+  const handleSelectBillingAddressSuggestion = (address: AddressSuggestion) => {
+    setFormData((prev: any) => ({
+      ...prev,
+      billingAddressLine1: address.line1,
+      billingAddressLine2: address.line2 || '',
+      billingCity: address.city,
+      billingState: address.state,
+      billingZip: address.zip,
+      billingCountry: address.country,
+    }));
+    setShowBillingAddressSuggestions(false);
+    setBillingAddressSuggestions([]);
   };
 
   const handleCountryChange = (value: string) => {
@@ -95,7 +176,7 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
   }, []);
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="max-w-6xl mx-auto">
       {/* Header with Order Number */}
       <div className="mb-6 text-center">
       </div>
@@ -138,36 +219,31 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
             </div>
           </div>
 
-          {/* Billing Address Information Section */}
-          <div>
-            <div className="text-white px-4 py-3 -mx-8 mb-4 mt-6 bg-[#215279]">
+          {/* Billing Address Information + Billing Contact Information, side
+              by side as two columns (Billing Address on the left, Billing
+              Contact on the right) instead of stacked full-width sections. */}
+          <div className="grid grid-cols-2 gap-6 items-stretch">
+          <div className="flex flex-col h-full">
+            <div className="text-white px-4 py-3 mb-4 mt-6 bg-[#215279]">
               <h3 className="font-semibold text-lg text-[#ffffff]">Billing Address Information</h3>
             </div>
 
-            {/* Toggle Buttons */}
-            <div className="flex gap-3 mb-4">
-              <button
-                onClick={() => setBillingAddressMode('existing')}
-                className={`flex-1 px-6 py-3 rounded-lg border-2 font-medium transition-colors ${ billingAddressMode === 'existing' ? 'bg-[#ddf4ff] border-[#265089]' : 'bg-white border-gray-300 text-gray-600 hover:border-gray-400' } text-[#265089]`}
-              >
-                Select existing
-              </button>
-              <button
-                onClick={() => setBillingAddressMode('new')}
-                className={`flex-1 px-6 py-3 rounded-lg border-2 font-medium transition-colors ${
-                  billingAddressMode === 'new'
-                    ? 'bg-[#215279] border-[#215279] text-white'
-                    : 'bg-white border-gray-300 text-gray-600 hover:border-gray-400'
-                }`}
-              >
-                + Create new
-              </button>
-            </div>
-
-            {/* Conditional Content */}
+            {/* Conditional Content — "existing" is the default: in production
+                this list is pre-populated from Salesforce and the matching
+                record is already selected, so there's no separate "Select
+                existing" step. "+ Create new" is offered as a lightweight
+                escape hatch only for the rare case where no record matches
+                (or a genuinely new address is needed). Wrapped in a flex
+                column that fills the section's full (grid-stretched) height,
+                so the trailing link/button lines up with the neighboring
+                Billing Contact column via mt-auto below, regardless of how
+                many fields each form has. */}
+            <div className="flex flex-col flex-1">
             {billingAddressMode === 'existing' ? (
-              /* Radio Card List */
-              <div className="space-y-3">
+              /* Radio Card List — stacked single column: this section now
+                 shares a row with Billing Contact, so a 2-across grid would
+                 be too cramped at half width. */
+              <div className="space-y-3 mb-3">
                 <label
                   className={`flex items-center gap-4 p-4 border-2 rounded-lg cursor-pointer transition-colors ${
                     selectedBillingAddress === 'LOC1'
@@ -185,7 +261,7 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
                     value="LOC1"
                     checked={selectedBillingAddress === 'LOC1'}
                     onChange={(e) => setSelectedBillingAddress(e.target.value)}
-                    className="w-5 h-5 text-[#2bc3bf]"
+                    className="w-5 h-5 accent-[#215279]"
                   />
                 </label>
 
@@ -206,25 +282,80 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
                     value="LOC2"
                     checked={selectedBillingAddress === 'LOC2'}
                     onChange={(e) => setSelectedBillingAddress(e.target.value)}
-                    className="w-5 h-5 text-[#2bc3bf]"
+                    className="w-5 h-5 accent-[#215279]"
                   />
                 </label>
               </div>
+            ) : null}
+
+            {billingAddressMode === 'existing' ? (
+              /* text-left overrides the button's default centered text —
+                 without it, this button (a flex item stretched full-width
+                 by its "flex flex-col" parent) renders its label centered
+                 instead of flush with the radio cards above it. */
+              <button
+                type="button"
+                onClick={() => setBillingAddressMode('new')}
+                className="text-sm font-medium text-left text-[#215279] hover:underline mt-auto"
+              >
+                + Create new
+              </button>
             ) : (
               /* Create New Address Form */
               <div className="space-y-4">
-                <div>
+                <button
+                  type="button"
+                  onClick={() => setBillingAddressMode('existing')}
+                  className="text-sm font-medium text-[#215279] hover:underline"
+                >
+                  ← Back to list
+                </button>
+
+                <div className="relative">
                   <Label htmlFor="billingAddressLine1" className="text-gray-600 text-sm">
                     Address Line 1
                     <span className="text-red-500 ml-1">*</span>
                   </Label>
                   <Input
                     id="billingAddressLine1"
-                    placeholder="Street number and street name"
+                    placeholder="Start typing an address..."
+                    autoComplete="off"
                     value={formData.billingAddressLine1 || ''}
-                    onChange={(e) => handleInputChange('billingAddressLine1', e.target.value)}
+                    onChange={(e) => handleBillingAddressLine1Change(e.target.value)}
+                    onFocus={() => {
+                      if (billingAddressSuggestions.length > 0) {
+                        setShowBillingAddressSuggestions(true);
+                      }
+                    }}
+                    onBlur={() => setShowBillingAddressSuggestions(false)}
                     className="mt-1"
                   />
+
+                  {showBillingAddressSuggestions && billingAddressSuggestions.length > 0 && (
+                    <ul className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg overflow-hidden">
+                      {billingAddressSuggestions.map((address, index) => (
+                        <li key={`${address.line1}-${index}`}>
+                          <button
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => handleSelectBillingAddressSuggestion(address)}
+                            className="w-full flex items-start gap-3 px-4 py-2 text-left hover:bg-blue-50 transition-colors"
+                          >
+                            <MapPin className="w-4 h-4 mt-0.5 text-gray-400 shrink-0" />
+                            <span>
+                              <span className="block text-sm text-gray-900">
+                                {address.line1}
+                                {address.line2 ? `, ${address.line2}` : ''}
+                              </span>
+                              <span className="block text-xs text-gray-500">
+                                {address.city}, {address.state} {address.zip}
+                              </span>
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
 
                 <div>
@@ -264,7 +395,7 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
                       id="billingState"
                       value={formData.billingState || ''}
                       onChange={(e) => handleInputChange('billingState', e.target.value)}
-                      className="mt-1 w-full h-10 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                      className="mt-1 w-full h-10 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-input-background"
                     >
                       <option value="">Select state/province</option>
                       {availableStates.map((state) => (
@@ -294,60 +425,44 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
                   <div>
                     <Label htmlFor="billingCountry" className="text-gray-600 text-sm">
                       Country
-                      <span className="text-red-500 ml-1">*</span>
                     </Label>
-                    <select
+                    {/* MTA only does business in Alaska (US), so Country is always
+                        "United States" — shown as a fixed, non-editable value instead
+                        of a select the user could change to something invalid. */}
+                    <div
                       id="billingCountry"
-                      value={formData.billingCountry || 'US'}
-                      onChange={(e) => handleCountryChange(e.target.value)}
-                      className="mt-1 w-full h-10 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                      className="mt-1 w-full h-10 px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-700 flex items-center"
                     >
-                      {COUNTRIES.map((country) => (
-                        <option key={country.value} value={country.value}>
-                          {country.label}
-                        </option>
-                      ))}
-                    </select>
+                      United States
+                    </div>
                   </div>
                 </div>
+
               </div>
             )}
+            </div>
           </div>
 
           {/* Billing Contact Section */}
-          <div>
-            <div className="bg-[#215279] text-white px-4 py-3 -mx-8 mb-4 mt-6">
+          <div className="flex flex-col h-full">
+            <div className="bg-[#215279] text-white px-4 py-3 mb-4 mt-6">
               <h3 className="font-semibold text-lg">Billing Contact Information</h3>
             </div>
 
-            {/* Toggle Buttons */}
-            <div className="flex gap-3 mb-4">
-              <button
-                onClick={() => setBillingMode('existing')}
-                className={`flex-1 px-6 py-3 rounded-lg border-2 font-medium transition-colors ${
-                  billingMode === 'existing'
-                    ? 'bg-[#ddf4ff] border-[#215279] text-[#215279]'
-                    : 'bg-white border-gray-300 text-gray-600 hover:border-gray-400'
-                }`}
-              >
-                Select existing
-              </button>
-              <button
-                onClick={() => setBillingMode('new')}
-                className={`flex-1 px-6 py-3 rounded-lg border-2 font-medium transition-colors ${
-                  billingMode === 'new'
-                    ? 'bg-[#215279] border-[#215279] text-white'
-                    : 'bg-white border-gray-300 text-gray-600 hover:border-gray-400'
-                }`}
-              >
-                + Create new
-              </button>
-            </div>
-
-            {/* Conditional Content */}
+            {/* Conditional Content — wrapped in a flex column that fills the
+                section's full (grid-stretched) height, so the trailing
+                link/button lines up with the neighboring Billing Address
+                column via mt-auto below. "existing" is the default: in
+                production this list is pre-populated from Salesforce and
+                the matching contact is already selected, so there's no
+                separate "Select existing" step. "+ Create new" is offered
+                only as a lightweight escape hatch. */}
+            <div className="flex flex-col flex-1">
             {billingMode === 'existing' ? (
-              /* Radio Card List */
-              <div className="space-y-3">
+              /* Radio Card List — stacked single column: this section now
+                 shares a row with Billing Address, so a 2-across grid would
+                 be too cramped at half width. */
+              <div className="space-y-3 mb-3">
                 <label
                   className={`flex items-center gap-4 p-4 border-2 rounded-lg cursor-pointer transition-colors ${
                     selectedBillingContact === 'LP'
@@ -364,7 +479,12 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
                   </div>
                   <div className="flex-1">
                     <div className={`font-semibold ${selectedBillingContact === 'LP' ? 'text-[#215279]' : 'text-gray-900'}`}>Laura Pineda</div>
-                    <div className={`text-sm ${selectedBillingContact === 'LP' ? 'text-[#215279]' : 'text-gray-600'}`}>Finance Director · l.pineda@empresa.com</div>
+                    <div className={`flex items-center gap-1.5 text-sm ${selectedBillingContact === 'LP' ? 'text-[#215279]' : 'text-gray-600'}`}>
+                      Finance Director
+                      <span title="l.pineda@empresa.com" className="inline-flex">
+                        <Mail className="w-3.5 h-3.5 flex-shrink-0 opacity-70" aria-label="Email" />
+                      </span>
+                    </div>
                   </div>
                   <input
                     type="radio"
@@ -372,7 +492,7 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
                     value="LP"
                     checked={selectedBillingContact === 'LP'}
                     onChange={(e) => setSelectedBillingContact(e.target.value)}
-                    className="w-5 h-5 text-[#2bc3bf]"
+                    className="w-5 h-5 accent-[#215279]"
                   />
                 </label>
 
@@ -392,7 +512,12 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
                   </div>
                   <div className="flex-1">
                     <div className={`font-semibold ${selectedBillingContact === 'JM' ? 'text-[#215279]' : 'text-gray-900'}`}>Jorge Mejia</div>
-                    <div className={`text-sm ${selectedBillingContact === 'JM' ? 'text-[#215279]' : 'text-gray-600'}`}>IT Manager · j.mejia@empresa.com</div>
+                    <div className={`flex items-center gap-1.5 text-sm ${selectedBillingContact === 'JM' ? 'text-[#215279]' : 'text-gray-600'}`}>
+                      IT Manager
+                      <span title="j.mejia@empresa.com" className="inline-flex">
+                        <Mail className="w-3.5 h-3.5 flex-shrink-0 opacity-70" aria-label="Email" />
+                      </span>
+                    </div>
                   </div>
                   <input
                     type="radio"
@@ -400,15 +525,37 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
                     value="JM"
                     checked={selectedBillingContact === 'JM'}
                     onChange={(e) => setSelectedBillingContact(e.target.value)}
-                    className="w-5 h-5 text-[#2bc3bf]"
+                    className="w-5 h-5 accent-[#215279]"
                   />
                 </label>
               </div>
+            ) : null}
+
+            {billingMode === 'existing' ? (
+              /* text-left overrides the button's default centered text —
+                 without it, this button (a flex item stretched full-width
+                 by its "flex flex-col" parent) renders its label centered
+                 instead of flush with the radio cards above it. */
+              <button
+                type="button"
+                onClick={() => setBillingMode('new')}
+                className="text-sm font-medium text-left text-[#215279] hover:underline mt-auto"
+              >
+                + Create new
+              </button>
             ) : (
               /* Create New Form */
               <div className="space-y-5">
+                <button
+                  type="button"
+                  onClick={() => setBillingMode('existing')}
+                  className="text-sm font-medium text-[#215279] hover:underline"
+                >
+                  ← Back to list
+                </button>
+
                 {/* Customer Invoice Address Section */}
-                
+
 
                 <div>
                   <Label className="text-gray-700 flex items-center gap-2 mb-3">
@@ -428,7 +575,7 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
                           id="billingContactSalutation"
                           value={formData.billingContactSalutation || ''}
                           onChange={(e) => handleInputChange('billingContactSalutation', e.target.value)}
-                          className="mt-1 w-full h-10 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                          className="mt-1 w-full h-10 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-input-background"
                         >
                           <option value="">--None--</option>
                           <option value="Mr.">Mr.</option>
@@ -519,61 +666,54 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
                     />
                   </div>
                 </div>
+
               </div>
             )}
+            </div>
+          </div>
           </div>
 
-          {/* Operations/Technical Contact Information Section */}
+          {/* Operations/Technical Contact Information + Onsite Contact, side
+              by side as two columns, same treatment as Billing
+              Address/Billing Contact above. */}
+          <div className="grid grid-cols-2 gap-6">
           <div>
-            <div className="bg-[#215279] text-white px-4 py-3 -mx-8 mb-4 mt-6">
+            <div className="bg-[#378394] text-white px-4 py-3 mb-4 mt-6">
               <h3 className="font-semibold text-lg">Operations/Technical Contact Information</h3>
             </div>
 
-            {/* Toggle Buttons */}
-            <div className="flex gap-3 mb-4">
-              <button
-                onClick={() => setOperationsMode('existing')}
-                className={`flex-1 px-6 py-3 rounded-lg border-2 font-medium transition-colors ${
-                  operationsMode === 'existing'
-                    ? 'bg-[#ddf4ff] border-[#215279] text-[#215279]'
-                    : 'bg-white border-gray-300 text-gray-600 hover:border-gray-400'
-                }`}
-              >
-                Select existing
-              </button>
-              <button
-                onClick={() => setOperationsMode('new')}
-                className={`flex-1 px-6 py-3 rounded-lg border-2 font-medium transition-colors ${
-                  operationsMode === 'new'
-                    ? 'bg-[#ddf4ff] border-[#215279] text-[#215279]'
-                    : 'bg-white border-gray-300 text-gray-600 hover:border-gray-400'
-                }`}
-              >
-                + Create new
-              </button>
-            </div>
-
-            {/* Conditional Content */}
+            {/* Conditional Content — "existing" is the default: in production
+                this list is pre-populated from Salesforce and the matching
+                contact is already selected, so there's no separate "Select
+                existing" step. "+ Create new" is offered only as a
+                lightweight escape hatch. */}
             {operationsMode === 'existing' ? (
-              /* Radio Card List */
-              <div className="space-y-3">
+              /* Radio Card List — stacked single column: this section now
+                 shares a row with Onsite Contact, so a 2-across grid would
+                 be too cramped at half width. */
+              <div className="space-y-3 mb-3">
                 <label
                   className={`flex items-center gap-4 p-4 border-2 rounded-lg cursor-pointer transition-colors ${
                     selectedOperationsContact === 'LP'
-                      ? 'bg-[#ddf4ff] border-[#215279]'
+                      ? 'bg-[rgba(55,131,148,0.12)] border-[#378394]'
                       : 'bg-gray-50 border-gray-300 hover:border-gray-400'
                   }`}
                 >
                   <div className={`flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center font-semibold ${
                     selectedOperationsContact === 'LP'
-                      ? 'bg-[#215279]/10 text-[#215279]'
+                      ? 'bg-[#378394]/10 text-[#378394]'
                       : 'bg-gray-100 text-gray-700'
                   }`}>
                     ZP
                   </div>
                   <div className="flex-1">
-                    <div className={`font-semibold ${selectedOperationsContact === 'LP' ? 'text-[#215279]' : 'text-gray-900'}`}>Zutanito Pérez</div>
-                    <div className={`text-sm ${selectedOperationsContact === 'LP' ? 'text-[#215279]' : 'text-gray-600'}`}>Operations Director · z.perez@empresa.com</div>
+                    <div className={`font-semibold ${selectedOperationsContact === 'LP' ? 'text-[#378394]' : 'text-gray-900'}`}>Zutanito Pérez</div>
+                    <div className={`flex items-center gap-1.5 text-sm ${selectedOperationsContact === 'LP' ? 'text-[#378394]' : 'text-gray-600'}`}>
+                      Operations Director
+                      <span title="z.perez@empresa.com" className="inline-flex">
+                        <Mail className="w-3.5 h-3.5 flex-shrink-0 opacity-70" aria-label="Email" />
+                      </span>
+                    </div>
                   </div>
                   <input
                     type="radio"
@@ -581,27 +721,32 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
                     value="LP"
                     checked={selectedOperationsContact === 'LP'}
                     onChange={(e) => setSelectedOperationsContact(e.target.value)}
-                    className="w-5 h-5 text-[#2bc3bf]"
+                    className="w-5 h-5 accent-[#378394]"
                   />
                 </label>
 
                 <label
                   className={`flex items-center gap-4 p-4 border-2 rounded-lg cursor-pointer transition-colors ${
                     selectedOperationsContact === 'JM'
-                      ? 'bg-[#ddf4ff] border-[#215279]'
+                      ? 'bg-[rgba(55,131,148,0.12)] border-[#378394]'
                       : 'bg-gray-50 border-gray-300 hover:border-gray-400'
                   }`}
                 >
                   <div className={`flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center font-semibold ${
                     selectedOperationsContact === 'JM'
-                      ? 'bg-[#215279]/10 text-[#215279]'
+                      ? 'bg-[#378394]/10 text-[#378394]'
                       : 'bg-gray-100 text-gray-700'
                   }`}>
                     MO
                   </div>
                   <div className="flex-1">
-                    <div className={`font-semibold ${selectedOperationsContact === 'JM' ? 'text-[#215279]' : 'text-gray-900'}`}>Marcus Oliver Thompson</div>
-                    <div className={`text-sm ${selectedOperationsContact === 'JM' ? 'text-[#215279]' : 'text-gray-600'}`}>Technical Operations Manager · m.thompson@empresa.com</div>
+                    <div className={`font-semibold ${selectedOperationsContact === 'JM' ? 'text-[#378394]' : 'text-gray-900'}`}>Marcus Oliver Thompson</div>
+                    <div className={`flex items-center gap-1.5 text-sm ${selectedOperationsContact === 'JM' ? 'text-[#378394]' : 'text-gray-600'}`}>
+                      Technical Operations Manager
+                      <span title="m.thompson@empresa.com" className="inline-flex">
+                        <Mail className="w-3.5 h-3.5 flex-shrink-0 opacity-70" aria-label="Email" />
+                      </span>
+                    </div>
                   </div>
                   <input
                     type="radio"
@@ -609,13 +754,31 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
                     value="JM"
                     checked={selectedOperationsContact === 'JM'}
                     onChange={(e) => setSelectedOperationsContact(e.target.value)}
-                    className="w-5 h-5 text-[#2bc3bf]"
+                    className="w-5 h-5 accent-[#378394]"
                   />
                 </label>
               </div>
+            ) : null}
+
+            {operationsMode === 'existing' ? (
+              <button
+                type="button"
+                onClick={() => setOperationsMode('new')}
+                className="text-sm font-medium text-[#378394] hover:underline"
+              >
+                + Create new
+              </button>
             ) : (
               /* Create New Form */
               <div className="space-y-4">
+                <button
+                  type="button"
+                  onClick={() => setOperationsMode('existing')}
+                  className="text-sm font-medium text-[#378394] hover:underline"
+                >
+                  ← Back to list
+                </button>
+
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <Label htmlFor="operationsSalutation" className="text-gray-600 text-sm">
@@ -625,7 +788,7 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
                       id="operationsSalutation"
                       value={formData.operationsSalutation || ''}
                       onChange={(e) => handleInputChange('operationsSalutation', e.target.value)}
-                      className="mt-1 w-full h-10 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                      className="mt-1 w-full h-10 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-input-background"
                     >
                       <option value="">--None--</option>
                       <option value="Mr.">Mr.</option>
@@ -710,61 +873,49 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
                     />
                   </div>
                 </div>
+
               </div>
             )}
           </div>
 
           {/* Onsite Contact Section */}
           <div>
-            <div className="bg-[#215279] text-white px-4 py-3 -mx-8 mb-4 mt-6">
+            <div className="bg-[#378394] text-white px-4 py-3 mb-4 mt-6">
               <h3 className="font-semibold text-lg">Onsite Contact</h3>
             </div>
 
-            {/* Toggle Buttons */}
-            <div className="flex gap-3 mb-4">
-              <button
-                onClick={() => setOnsiteMode('existing')}
-                className={`flex-1 px-6 py-3 rounded-lg border-2 font-medium transition-colors ${
-                  onsiteMode === 'existing'
-                    ? 'bg-[#ddf4ff] border-[#215279] text-[#215279]'
-                    : 'bg-white border-gray-300 text-gray-600 hover:border-gray-400'
-                }`}
-              >
-                Select existing
-              </button>
-              <button
-                onClick={() => setOnsiteMode('new')}
-                className={`flex-1 px-6 py-3 rounded-lg border-2 font-medium transition-colors ${
-                  onsiteMode === 'new'
-                    ? 'bg-[#ddf4ff] border-[#215279] text-[#215279]'
-                    : 'bg-white border-gray-300 text-gray-600 hover:border-gray-400'
-                }`}
-              >
-                + Create new
-              </button>
-            </div>
-
-            {/* Conditional Content */}
+            {/* Conditional Content — "existing" is the default: in production
+                this list is pre-populated from Salesforce and the matching
+                contact is already selected, so there's no separate "Select
+                existing" step. "+ Create new" is offered only as a
+                lightweight escape hatch. */}
             {onsiteMode === 'existing' ? (
-              /* Radio Card List */
-              <div className="space-y-3">
+              /* Radio Card List — stacked single column: this section now
+                 shares a row with Operations/Technical Contact, so a
+                 2-across grid would be too cramped at half width. */
+              <div className="space-y-3 mb-3">
                 <label
                   className={`flex items-center gap-4 p-4 border-2 rounded-lg cursor-pointer transition-colors ${
                     selectedOnsiteContact === 'PL'
-                      ? 'bg-[#ddf4ff] border-[#215279]'
+                      ? 'bg-[rgba(55,131,148,0.12)] border-[#378394]'
                       : 'bg-gray-50 border-gray-300 hover:border-gray-400'
                   }`}
                 >
                   <div className={`flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center font-semibold ${
                     selectedOnsiteContact === 'PL'
-                      ? 'bg-[#215279]/10 text-[#215279]'
+                      ? 'bg-[#378394]/10 text-[#378394]'
                       : 'bg-gray-100 text-gray-700'
                   }`}>
                     PL
                   </div>
                   <div className="flex-1">
-                    <div className={`font-semibold ${selectedOnsiteContact === 'PL' ? 'text-[#215279]' : 'text-gray-900'}`}>Perenganito López</div>
-                    <div className={`text-sm ${selectedOnsiteContact === 'PL' ? 'text-[#215279]' : 'text-gray-600'}`}>Onsite Coordinator · p.lopez@empresa.com</div>
+                    <div className={`font-semibold ${selectedOnsiteContact === 'PL' ? 'text-[#378394]' : 'text-gray-900'}`}>Perenganito López</div>
+                    <div className={`flex items-center gap-1.5 text-sm ${selectedOnsiteContact === 'PL' ? 'text-[#378394]' : 'text-gray-600'}`}>
+                      Onsite Coordinator
+                      <span title="p.lopez@empresa.com" className="inline-flex">
+                        <Mail className="w-3.5 h-3.5 flex-shrink-0 opacity-70" aria-label="Email" />
+                      </span>
+                    </div>
                   </div>
                   <input
                     type="radio"
@@ -772,27 +923,32 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
                     value="PL"
                     checked={selectedOnsiteContact === 'PL'}
                     onChange={(e) => setSelectedOnsiteContact(e.target.value)}
-                    className="w-5 h-5 text-[#2bc3bf]"
+                    className="w-5 h-5 accent-[#378394]"
                   />
                 </label>
 
                 <label
                   className={`flex items-center gap-4 p-4 border-2 rounded-lg cursor-pointer transition-colors ${
                     selectedOnsiteContact === 'DAM'
-                      ? 'bg-[#ddf4ff] border-[#215279]'
+                      ? 'bg-[rgba(55,131,148,0.12)] border-[#378394]'
                       : 'bg-gray-50 border-gray-300 hover:border-gray-400'
                   }`}
                 >
                   <div className={`flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center font-semibold ${
                     selectedOnsiteContact === 'DAM'
-                      ? 'bg-[#215279]/10 text-[#215279]'
+                      ? 'bg-[#378394]/10 text-[#378394]'
                       : 'bg-gray-100 text-gray-700'
                   }`}>
                     DA
                   </div>
                   <div className="flex-1">
-                    <div className={`font-semibold ${selectedOnsiteContact === 'DAM' ? 'text-[#215279]' : 'text-gray-900'}`}>Diego Armando Maradona</div>
-                    <div className={`text-sm ${selectedOnsiteContact === 'DAM' ? 'text-[#215279]' : 'text-gray-600'}`}>Site Manager · d.maradona@empresa.com</div>
+                    <div className={`font-semibold ${selectedOnsiteContact === 'DAM' ? 'text-[#378394]' : 'text-gray-900'}`}>Diego Armando Maradona</div>
+                    <div className={`flex items-center gap-1.5 text-sm ${selectedOnsiteContact === 'DAM' ? 'text-[#378394]' : 'text-gray-600'}`}>
+                      Site Manager
+                      <span title="d.maradona@empresa.com" className="inline-flex">
+                        <Mail className="w-3.5 h-3.5 flex-shrink-0 opacity-70" aria-label="Email" />
+                      </span>
+                    </div>
                   </div>
                   <input
                     type="radio"
@@ -800,13 +956,31 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
                     value="DAM"
                     checked={selectedOnsiteContact === 'DAM'}
                     onChange={(e) => setSelectedOnsiteContact(e.target.value)}
-                    className="w-5 h-5 text-[#2bc3bf]"
+                    className="w-5 h-5 accent-[#378394]"
                   />
                 </label>
               </div>
+            ) : null}
+
+            {onsiteMode === 'existing' ? (
+              <button
+                type="button"
+                onClick={() => setOnsiteMode('new')}
+                className="text-sm font-medium text-[#378394] hover:underline"
+              >
+                + Create new
+              </button>
             ) : (
               /* Create New Form */
               <div className="space-y-4">
+                <button
+                  type="button"
+                  onClick={() => setOnsiteMode('existing')}
+                  className="text-sm font-medium text-[#378394] hover:underline"
+                >
+                  ← Back to list
+                </button>
+
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <Label htmlFor="onsiteSalutation" className="text-gray-600 text-sm">
@@ -816,7 +990,7 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
                       id="onsiteSalutation"
                       value={formData.onsiteSalutation || ''}
                       onChange={(e) => handleInputChange('onsiteSalutation', e.target.value)}
-                      className="mt-1 w-full h-10 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                      className="mt-1 w-full h-10 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-input-background"
                     >
                       <option value="">--None--</option>
                       <option value="Mr.">Mr.</option>
@@ -901,18 +1075,22 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
                     />
                   </div>
                 </div>
+
               </div>
             )}
+          </div>
           </div>
 
           {/* Escalation Contact Section */}
           <div>
-            <div className="bg-[#215279] text-white px-4 py-3 -mx-8 mb-4 mt-6">
+            <div className="bg-[#215279] text-white px-4 py-3 mb-4 mt-6">
               <h3 className="font-semibold text-lg">Escalation Contact</h3>
             </div>
 
-            <div className="space-y-6">
-              {/* Escalation Contact 1 */}
+            {/* Escalation Contact 1 + Escalation Contact 2, side by side as
+                two columns under the shared "Escalation Contact" header,
+                same treatment as the contact sections above. */}
+            <div className="grid grid-cols-2 gap-6">
               <div>
                 <Label className="text-gray-700 flex items-center gap-2 mb-3">
                   <span>
@@ -931,7 +1109,7 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
                         id="escalation1Salutation"
                         value={formData.escalation1Salutation || ''}
                         onChange={(e) => handleInputChange('escalation1Salutation', e.target.value)}
-                        className="mt-1 w-full h-10 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                        className="mt-1 w-full h-10 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-input-background"
                       >
                         <option value="">--None--</option>
                         <option value="Mr.">Mr.</option>
@@ -1019,8 +1197,7 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
                 </div>
               </div>
 
-              {/* Escalation Contact 2 */}
-              <div className="pt-4 border-t border-gray-200">
+              <div>
                 <Label className="text-gray-700 flex items-center gap-2 mb-3">
                   <span>Escalation Contact 2</span>
                 </Label>
@@ -1035,7 +1212,7 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
                         id="escalation2Salutation"
                         value={formData.escalation2Salutation || ''}
                         onChange={(e) => handleInputChange('escalation2Salutation', e.target.value)}
-                        className="mt-1 w-full h-10 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                        className="mt-1 w-full h-10 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-input-background"
                       >
                         <option value="">--None--</option>
                         <option value="Mr.">Mr.</option>
@@ -1123,7 +1300,7 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
 
           {/* Signatures Section */}
           <div>
-            <div className="bg-[#215279] text-white px-4 py-3 -mx-8 mb-4 mt-6">
+            <div className="bg-[#215279] text-white px-4 py-3 mb-4 mt-6">
               <h3 className="font-semibold text-lg">Signatures</h3>
             </div>
 
@@ -1153,7 +1330,7 @@ export function ServiceOrderForm({ serviceType, onBack, onNext }: ServiceOrderFo
                     id="signatorySalutation"
                     value={formData.signatorySalutation || ''}
                     onChange={(e) => handleInputChange('signatorySalutation', e.target.value)}
-                    className="mt-1 w-full h-10 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                    className="mt-1 w-full h-10 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-input-background"
                   >
                     <option value="">--None--</option>
                     <option value="Mr.">Mr.</option>

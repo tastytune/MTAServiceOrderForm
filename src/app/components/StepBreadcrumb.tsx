@@ -12,7 +12,7 @@ interface StepBreadcrumbProps {
 
 export function StepBreadcrumb({ steps }: StepBreadcrumbProps) {
   return (
-    <div className="w-full max-w-4xl mx-auto p-[0px] mx-[229px] mt-[0px] mb-[9px]">
+    <div className="p-[0px] mt-3">
       <div className="flex items-center gap-2">
         {steps.map((step, index) => {
           const isCompleted = step.status === 'completed';
@@ -56,7 +56,11 @@ export function generateSteps(
   totalSubSteps?: number
 ): Step[] {
   const steps: Step[] = [];
-  const isEPLPointToPoint = selectedService === 'EPL_P2P' || selectedService === 'EVPL_P2P';
+  // Only EVPL Point-to-Point still has separate Location A / Location Z
+  // screens. EPL Point-to-Point was merged into a single dual-location
+  // screen, so it must always show one "Configuration" step, never a
+  // Location A / Location Z split.
+  const hasSplitLocationSteps = selectedService === 'EVPL_P2P';
 
   // Step 1: Service Type Selection
   steps.push({
@@ -73,7 +77,7 @@ export function generateSteps(
       status: 'upcoming',
     });
 
-    if (isEPLPointToPoint) {
+    if (hasSplitLocationSteps) {
       steps.push({
         id: 'configuration-a',
         label: 'Configuration Location A',
@@ -109,7 +113,7 @@ export function generateSteps(
 
   if (!hasServiceOrderData) {
     // Show upcoming steps when on step 2
-    if (isEPLPointToPoint) {
+    if (hasSplitLocationSteps) {
       steps.push({
         id: 'configuration-a',
         label: 'Configuration Location A',
@@ -137,7 +141,7 @@ export function generateSteps(
   }
 
   // Step 3: Configuration (split into Location A and Z for EPL Point-to-Point)
-  if (isEPLPointToPoint && totalSubSteps === 2) {
+  if (hasSplitLocationSteps && totalSubSteps === 2) {
     // Configuration Location A
     steps.push({
       id: 'configuration-a',
